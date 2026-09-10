@@ -11,6 +11,9 @@ lean/   Bench.lean — the Lean benchmark (lake project depending on evm-abi-lea
 go/     main.go   — the go-ethereum mirror (go-ethereum v1.13.14)
 ```
 
+Cross-language rows only.  evm-abi-lean's own bench is where the codec is
+measured against the specification it is proved equal to.
+
 ## Run
 
 ```bash
@@ -20,8 +23,8 @@ cd lean && lake build bench && ./.lake/build/bin/bench
 # Go
 cd go && go build -o bench . && ./bench
 
-# both, then print the Lean-vs-Go table below
-./scripts/bench_diff.py
+# both, then print the Lean-vs-Go table below (medians + spread, ~9s)
+./scripts/bench_diff.py --runs 50
 ```
 
 Both print sizes; Go's sizes are Lean + 32 (its `Arguments.Pack` wraps a
@@ -39,45 +42,44 @@ transitively; run `lake update` to move to the branch tips.
 
 ## Methodology
 
-* Both binaries compiled, run on the same machine, alternating run by run so
-  drift hits both columns equally.
-* 20 reps per case, reported as µs/op; each table cell is the median of twenty
-  full runs.  `./scripts/bench_diff.py --runs 20` does the medianing and prints
-  the spread below, so the table and the claims about it come out of one
-  command.
-* **Measured** run-to-run spread over those twenty runs, `(max−min)/median`
-  per row: Lean **0–25%** (median row 12%), go-ethereum **9–33%** (median row
-  15%).  Go is the noisier column on eight of the twelve rows.  A row sitting
-  near the 1.25× parity band can change verdict on the Go column alone, with
-  nothing on the Lean side moving — `decode flat 500` and `decode flat 2000`
-  each did so between twenty-run measurements taken minutes apart, so twenty
-  runs narrows those two rows without settling them.
-* The Lean rows are the `ValBA` runtime value family throughout — `encode`
-  and `decodeStrict`, over packed `ByteArray` payloads — not the `List UInt8`
-  specification the proofs are stated over.  The bench prints both, but only
-  the runtime one is keyed into the table: timing the specification against
-  go-ethereum would compare a Go encoder with a Lean *specification*.
+* 20 reps per case, reported as µs/op; each cell is the median of fifty runs.
+  Both binaries are built once, then run alternately so drift hits both
+  columns equally.  `./scripts/bench_diff.py --runs 50` does all of it in
+  about nine seconds and prints the table and the spread, so the numbers and
+  the claims about them come out of one command.
+* Run-to-run spread, `(max−min)/median` per row: Lean **13–33%** (median row
+  21%), go-ethereum **19–47%** (median row 30%), Go noisier on ten of the
+  twelve rows.  That is a *range* statistic, so it grows with the run count
+  and only compares between runs of equal N.  The medians are far steadier:
+  three fifty-run passes held every Lean row within 3%, bar `nest 200` at 7%
+  (2 µs).  `decode flat 500` still straddles the band — 1.25×, 1.21×, 1.26×
+  across those passes — so that one verdict word is a coin flip.
+* The Lean rows are the `ValBA` runtime family — `encode` and `decodeStrict`
+  over packed `ByteArray` payloads — not the `List UInt8` specification the
+  proofs are stated over.  The specification is not timed here: that ladder is
+  evm-abi-lean's own bench.  This one keeps only what has a Go counterpart,
+  which is why it runs in ~50 ms.
 * go-ethereum's `Pack`/`Unpack` go through reflection; that overhead is
   part of the real-world cost.
 
 Absolute µs are machine-specific; the ratios are the robust claim.
 
-## Numbers (Apple Silicon, median of twenty runs)
+## Numbers (Apple Silicon, median of fifty runs)
 
 | shape | Lean fast/ValBA | go-ethereum | Lean vs Go |
 |---|---|---|---|
-| encode flat `bytes[]` 500 | 20 | 150 | 7.5× ahead |
-| encode flat 2000 | 80 | 604 | 7.5× ahead |
-| encode `uint256[]` 1000 | 17 | 72 | 4.2× ahead |
-| encode nest depth 50 | 7 | 104 | 14.9× ahead |
-| encode nest depth 200 | 28 | 1213 | 43.3× ahead |
-| decode flat 500 (ValBA) | 54 | 70 | 1.3× ahead |
-| decode flat 2000 (ValBA) | 222 | 273 | **parity** |
-| decode `uint256[]` 2000 (ValBA) | 64 | 83 | 1.3× ahead |
-| encode unaligned 2000 | 88 | 469 | 5.3× ahead |
-| decode unaligned 2000 (ValBA) | 254 | 286 | **parity** |
-| encode `bytes32[]` 2000 | 15 | 170 | 11.3× ahead |
-| decode `bytes32[]` 2000 (ValBA) | 170 | 147 | **parity** |
+| encode flat `bytes[]` 500 | 21 | 160 | 7.6× ahead |
+| encode flat 2000 | 85 | 665 | 7.8× ahead |
+| encode `uint256[]` 1000 | 17 | 76 | 4.5× ahead |
+| encode nest depth 50 | 7 | 116 | 16.6× ahead |
+| encode nest depth 200 | 29 | 1435 | 49.5× ahead |
+| decode flat 500 (ValBA) | 57 | 74 | 1.3× ahead |
+| decode flat 2000 (ValBA) | 231 | 298 | 1.3× ahead |
+| decode `uint256[]` 2000 (ValBA) | 71 | 87 | **parity** |
+| encode unaligned 2000 | 90 | 503 | 5.6× ahead |
+| decode unaligned 2000 (ValBA) | 258 | 301 | **parity** |
+| encode `bytes32[]` 2000 | 16 | 181 | 11.3× ahead |
+| decode `bytes32[]` 2000 (ValBA) | 173 | 154 | **parity** |
 
 Encoding is **a size pass and a write pass**, and no intermediate structure
 at all.  The first pass computes every dynamic subvalue's encoded size
@@ -85,7 +87,7 @@ bottom-up, one node per subvalue; the second writes the whole encoding
 forward into a buffer sized exactly once, reading each offset word off that
 size tree in `O(1)`.  go-ethereum's `pack` instead re-appends the tail at
 every level, which is `O(n·d)` in the nesting depth — the gap the `nest` rows
-measure (43× at depth 200).
+measure (49× at depth 200).
 
 Two more things earn the flat rows.  An ABI word is four `UInt64` limbs
 rather than a `Nat`, so no word round-trips through a bignum, and words are
@@ -117,7 +119,8 @@ bench, moves every row in this table by less than noise.
   `O(1)`, so the encode stays linear and pulls away as depth grows.
 * **decode** — the `ValBA` rows use packed `ByteArray` payloads (one
   `extract` per payload); go-ethereum slices the input.  Both are at or just
-  ahead of parity, and both are ~18× faster than Lean's `List UInt8` decode.
+  ahead of parity.  (Both are also ~18× faster than Lean's `List UInt8`
+  decode, but that comparison is evm-abi-lean's to make, not this repo's.)
 * **unaligned 100-byte payloads** — the zero padding (28 bytes per element)
   is checked by index (`allZerosBA`) on the Lean side, no list built.
 * **`bytes32[]`** — fixed-word payloads.  Encode is one 32-byte copy per
