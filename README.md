@@ -1,7 +1,7 @@
 # evm-abi-benchmarks
 
 Cross-language benchmarks for EVM ABI encoding/decoding: the **Lean** codec
-in [`evm-abi-lean`](https://github.com/yihuang/evm-abi-lean) (its `word-leaf`
+in [`evm-abi-lean`](https://github.com/yihuang/evm-abi-lean) (its `main`
 branch, over lean-binary's `main`) against **go-ethereum's `abi` package**
 (the mainstream Go ABI implementation).  Same shapes, same sizes, same µs/op
 methodology.
@@ -34,18 +34,20 @@ The comparable rows are also emitted as machine-readable
 regenerates the table below.  Pass two captured outputs as arguments
 instead to diff without re-running (`./scripts/bench_diff.py lean.txt go.txt`).
 
-`lean/lakefile.toml` tracks the `word-leaf` branch, which pins lean-binary to
-`pushlimb`; run `lake update` to move to the branch tips.
+`lean/lakefile.toml` tracks `main`, which brings lean-binary's `main` in
+transitively; run `lake update` to move to the branch tips.
 
 ## Methodology
 
 * Both binaries compiled, run on the same machine, minutes apart.
-* 20 reps per case, reported as µs/op; each table cell is the median of ten
-  full `./scripts/bench_diff.py` runs.
-* The Lean column is the stable one — it varies by ~2–4% across those runs,
-  where go-ethereum's spans ~10–20%.  Rows sitting near the 1.25× parity band
-  can therefore change verdict on the Go column alone, with nothing on the
-  Lean side moving.
+* 20 reps per case, reported as µs/op; each table cell is the median of twenty
+  full runs, alternating Lean and Go run by run so drift hits both columns
+  equally.
+* **Measured** run-to-run spread over those twenty runs, `(max−min)/median`
+  per row: Lean **0–21%** (median row 11%), go-ethereum **11–78%** (median row
+  19%).  Go is the noisier column on eleven of the twelve rows.  Rows sitting
+  near the 1.25× parity band can therefore change verdict on the Go column
+  alone, with nothing on the Lean side moving.
 * The Lean rows are the `ValBA` runtime value family throughout — `encode`
   and `decodeStrict`, over packed `ByteArray` payloads — not the `List UInt8`
   specification the proofs are stated over.  The bench prints both, but only
@@ -56,22 +58,22 @@ instead to diff without re-running (`./scripts/bench_diff.py lean.txt go.txt`).
 
 Absolute µs are machine-specific; the ratios are the robust claim.
 
-## Numbers (Apple Silicon, median of ten runs)
+## Numbers (Apple Silicon, median of twenty runs)
 
 | shape | Lean fast/ValBA | go-ethereum | Lean vs Go |
 |---|---|---|---|
-| encode flat `bytes[]` 500 | 21 | 154 | 7.3× ahead |
-| encode flat 2000 | 82 | 610 | 7.4× ahead |
-| encode `uint256[]` 1000 | 35 | 77 | 2.2× ahead |
+| encode flat `bytes[]` 500 | 20 | 153 | 7.6× ahead |
+| encode flat 2000 | 81 | 619 | 7.6× ahead |
+| encode `uint256[]` 1000 | 17 | 73 | 4.3× ahead |
 | encode nest depth 50 | 7 | 109 | 15.6× ahead |
-| encode nest depth 200 | 28 | 1248 | 44.6× ahead |
-| decode flat 500 (ValBA) | 55 | 69 | 1.3× ahead |
-| decode flat 2000 (ValBA) | 222 | 280 | 1.3× ahead |
-| decode `uint256[]` 2000 (ValBA) | 64 | 85 | 1.3× ahead |
-| encode unaligned 2000 | 88 | 469 | 5.3× ahead |
+| encode nest depth 200 | 28 | 1259 | 45.0× ahead |
+| decode flat 500 (ValBA) | 55 | 70 | 1.3× ahead |
+| decode flat 2000 (ValBA) | 223 | 280 | 1.3× ahead |
+| decode `uint256[]` 2000 (ValBA) | 64 | 83 | 1.3× ahead |
+| encode unaligned 2000 | 87 | 463 | 5.3× ahead |
 | decode unaligned 2000 (ValBA) | 253 | 285 | **parity** |
-| encode `bytes32[]` 2000 | 13 | 170 | 13.1× ahead |
-| decode `bytes32[]` 2000 (ValBA) | 171 | 144 | **parity** |
+| encode `bytes32[]` 2000 | 15 | 171 | 11.4× ahead |
+| decode `bytes32[]` 2000 (ValBA) | 170 | 147 | **parity** |
 
 Encoding is **a size pass and a write pass**, and no intermediate structure
 at all.  The first pass computes every dynamic subvalue's encoded size
