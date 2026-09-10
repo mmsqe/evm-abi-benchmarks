@@ -43,6 +43,11 @@ so the builder only pays off in compiled code.
 
 open EvmAbi
 open EvmAbi.Ty
+-- the runtime codec (`encode`, `decodeStrict`) and the list-valued walker
+-- (`decodeStrictBA`) live in their own namespaces since evm-abi-lean#42;
+-- `Spec.*` stays reachable through `EvmAbi`.
+open EvmAbi.Codec
+open EvmAbi.Codec.ByteArray
 
 def flatTy : Ty := .array .bytes
 
@@ -162,7 +167,7 @@ def benchBytesN (decodeKey encodeKey : String) (n : Nat) (h : n < 2 ^ 64) : IO U
   let v : t.Val := ⟨List.replicate n el, by simpa using h⟩
   let ba := Spec.encodeByteArray t v
   let elba : ValBA (.bytesN 32) := ⟨(List.replicate 32 7).toByteArray, by
-    simp [Binary.ByteArray.size_eq_toList_length, List.length_replicate]⟩
+    simp [Binary.ByteArray.size_eq_toList_length]⟩
   let vba : ValBA t := ⟨List.replicate n elba, by simpa using h⟩
   IO.println s!"-- bytes32[] × {n} ({ba.size} bytes)"
   timeIt "decodeStrictBA (List)  " (fun _ =>
