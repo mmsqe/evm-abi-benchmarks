@@ -47,8 +47,8 @@ transitively; run `lake update` to move to the branch tips.
   columns equally.  `./scripts/bench_diff.py --runs 50` does all of it in
   about nine seconds and prints the table and the spread, so the numbers and
   the claims about them come out of one command.
-* Run-to-run spread, `(max−min)/median` per row: Lean **7–32%** (median row
-  12%), go-ethereum **14–86%** (median row 22%), Go noisier on eleven of the
+* Run-to-run spread, `(max−min)/median` per row: Lean **9–38%** (median row
+  18%), go-ethereum **15–94%** (median row 28%), Go noisier on ten of the
   twelve rows.  That is a *range* statistic, so it grows with the run count
   and only compares between runs of equal N.  The medians are much steadier
   than that, but the four decode rows all sit near the 1.25× band and their
@@ -68,29 +68,27 @@ Absolute µs are machine-specific; the ratios are the robust claim.
 
 | shape | Lean fast/ValBA | go-ethereum | Lean vs Go |
 |---|---|---|---|
-| encode flat `bytes[]` 500 | 19 | 149 | 7.8× ahead |
-| encode flat 2000 | 75 | 617 | 8.2× ahead |
-| encode `uint256[]` 1000 | 20 | 73 | 3.7× ahead |
-| encode nest depth 50 | 8 | 106 | 13.2× ahead |
-| encode nest depth 200 | 31 | 1211 | 39.1× ahead |
-| decode flat 500 (ValBA) | 57 | 67 | **parity** |
-| decode flat 2000 (ValBA) | 225 | 280 | **parity** |
-| decode `uint256[]` 2000 (ValBA) | 69 | 83 | **parity** |
-| encode unaligned 2000 | 87 | 462 | 5.3× ahead |
-| decode unaligned 2000 (ValBA) | 257 | 285 | **parity** |
-| encode `bytes32[]` 2000 | 19 | 172 | 9.1× ahead |
-| decode `bytes32[]` 2000 (ValBA) | 167 | 147 | **parity** |
+| encode flat `bytes[]` 500 | 19 | 152 | 8.0× ahead |
+| encode flat 2000 | 78 | 608 | 7.8× ahead |
+| encode `uint256[]` 1000 | 15 | 72 | 4.8× ahead |
+| encode nest depth 50 | 8 | 105 | 13.1× ahead |
+| encode nest depth 200 | 32 | 1224 | 38.2× ahead |
+| decode flat 500 (ValBA) | 58 | 68 | **parity** |
+| decode flat 2000 (ValBA) | 227 | 278 | **parity** |
+| decode `uint256[]` 2000 (ValBA) | 70 | 82 | **parity** |
+| encode unaligned 2000 | 87 | 460 | 5.3× ahead |
+| decode unaligned 2000 (ValBA) | 260 | 284 | **parity** |
+| encode `bytes32[]` 2000 | 11 | 172 | 15.6× ahead |
+| decode `bytes32[]` 2000 (ValBA) | 169 | 148 | **parity** |
 
-Three encode rows lost ground to evm-abi-lean#45, which moved the width and
-arity constraints into `Ty`: `uint256[] 1000` **17 → 20** µs/op,
-`bytes32[] 2000` **15 → 18**, `nest 200` **28 → 31**.  A/B over 40 alternating
-runs per build leaves the first two distributions disjoint (old ≤ 17 and ≤ 18,
-new ≥ 19 and ≥ 18), so this is the change and not drift.  The flat `bytes[]`
-and unaligned rows did not move, which points at the per-element reads the
-three regressed rows share — `uint`/`bytesN` now carry a `Width` whose size is
-`m.bits / 8` rather than a bare `Nat`, and a tuple is now a head plus a tail
-rather than one list — though that mechanism is inferred from which rows moved,
-not measured directly.
+Taken against evm-abi-lean 726a987.  Two encode rows moved twice: #45 put the
+width and arity constraints into `Ty` and cost them **17 → 20** µs/op
+(`uint256[] 1000`) and **15 → 18** (`bytes32[] 2000`), because a static-element
+array re-matched on its element type per element; #46 gave those two element
+types their own loops, with no `Ty` to scrutinise, and took them to **15** and
+**11** — past where they started.  `nest 200` keeps #45's **28 → 32**, since a
+tuple's components are heterogeneous and there is no single loop to hoist the
+match into.
 
 Encoding is **a size pass and a write pass**, and no intermediate structure
 at all.  The first pass computes every dynamic subvalue's encoded size
@@ -98,7 +96,7 @@ bottom-up, one node per subvalue; the second writes the whole encoding
 forward into a buffer sized exactly once, reading each offset word off that
 size tree in `O(1)`.  go-ethereum's `pack` instead re-appends the tail at
 every level, which is `O(n·d)` in the nesting depth — the gap the `nest` rows
-measure (39× at depth 200).
+measure (38× at depth 200).
 
 Two more things earn the flat rows.  An ABI word is four `UInt64` limbs
 rather than a `Nat`, so no word round-trips through a bignum, and words are
