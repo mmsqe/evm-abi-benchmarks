@@ -62,20 +62,37 @@ def verdict(lean_us: int, go_us: int) -> str:
     return "**parity**"
 
 
-LEAN_CMD = "cd lean && lake build bench && ./.lake/build/bin/bench"
-GO_CMD = "cd go && go build -o bench . && ./bench"
+# Build and run are separate: the benches are fast enough (~50 ms Lean, ~120 ms
+# Go) that a per-sample `lake build`/`go build` would be the dominant cost and
+# would inflate every row through contention.  Build once, then time binaries.
+LEAN_BUILD = "cd lean && lake build bench"
+GO_BUILD = "cd go && go build -o bench ."
+LEAN_CMD = "cd lean && ./.lake/build/bin/bench"
+GO_CMD = "cd go && ./bench"
+
+
+def sh(cmd: str) -> str:
+    """Run `cmd` in ROOT, exit on failure, return its stdout."""
+    proc = subprocess.run(["bash", "-lc", cmd], cwd=ROOT, capture_output=True, text=True)
+    if proc.returncode != 0:
+        sys.stderr.write(proc.stdout + proc.stderr)
+        sys.exit(f"{cmd} failed ({proc.returncode})")
+    return proc.stdout
+
+
+def build() -> None:
+    """Build both benches, before any timing."""
+    sh(LEAN_BUILD)
+    sh(GO_BUILD)
 
 
 def sample(cmd: str, quiet: bool = False) -> dict:
     """One run of one bench binary, parsed."""
-    proc = subprocess.run(["bash", "-lc", cmd], cwd=ROOT, capture_output=True, text=True)
-    if proc.returncode != 0:
-        sys.stderr.write(proc.stderr)
-        sys.exit(f"{cmd} failed ({proc.returncode})")
+    out = sh(cmd)
     if not quiet:
-        sys.stdout.write(proc.stdout)
+        sys.stdout.write(out)
         sys.stdout.flush()
-    return parse(proc.stdout)
+    return parse(out)
 
 
 def spread(vs: list[int]) -> float:
@@ -95,12 +112,14 @@ def main() -> None:
         leans = [parse(Path(sys.argv[1]).read_text())]
         gos = [parse(Path(sys.argv[2]).read_text())]
     elif runs == 1:
+        build()
         print("=== Lean ===")
         leans = [sample(LEAN_CMD)]
         print("\n=== Go (go-ethereum) ===")
         gos = [sample(GO_CMD)]
     else:
-        # build once, then alternate so drift hits both columns equally
+        build()
+        # one warm-up pair, then alternate so drift hits both columns equally
         sample(LEAN_CMD, quiet=True)
         sample(GO_CMD, quiet=True)
         leans, gos = [], []
