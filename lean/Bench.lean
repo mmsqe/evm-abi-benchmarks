@@ -74,7 +74,9 @@ def flatValOf (payload : Nat) (p : payload < 2 ^ 64)
 /-- A `uint256[]` of full-width values — token amounts, hashes and addresses
 are all above `2 ^ 63`, so every word goes through `Nat`'s bignum path.  This
 is the case `Binary.Fast`'s chunked encoder exists for. -/
-def wideTy : Ty := .array (.uint 256)
+-- `Ty.uint`'s width is a byte length since evm-abi-lean#45, so `uint256` is
+-- `.uint 32`.
+def wideTy : Ty := .array (.uint 32)
 
 /-- The full-width `uint256[]`, packed (`ValBA`). -/
 def wideValBA (n : Nat) (h : n < 2 ^ 64) : ValBA wideTy :=
@@ -83,8 +85,8 @@ def wideValBA (n : Nat) (h : n < 2 ^ 64) : ValBA wideTy :=
 
 /-- `nest k = (bytes, (bytes, … ))`, `k` tuples deep. -/
 def nest : Nat → Ty
-  | 0 => .tuple [.bytes]
-  | k + 1 => .tuple [.bytes, nest k]
+  | 0 => .tuple .bytes []
+  | k + 1 => .tuple .bytes [nest k]
 
 /-- The nested value, packed (`ValBA`). -/
 def nestValBA : (k : Nat) → ValBA (nest k)
@@ -139,9 +141,11 @@ payload in one `copySlice`, and reads one length word for the whole array
 rather than one per element. -/
 def benchBytesN (decodeKey encodeKey : String) (n : Nat) (h : n < 2 ^ 64) : IO Unit := do
   let t : Ty := .array (.bytesN 32)
-  let el : Ty.Val (.bytesN 32) := ⟨List.replicate 32 7, by simp⟩
+  -- the payload bound is now stated against `Width.bytes`, which `simp` does
+  -- not unfold on its own
+  let el : Ty.Val (.bytesN 32) := ⟨List.replicate 32 7, by decide⟩
   let elba : ValBA (.bytesN 32) := ⟨(List.replicate 32 7).toByteArray, by
-    simp [Binary.ByteArray.size_eq_toList_length]⟩
+    simp [Binary.ByteArray.size_eq_toList_length]; decide⟩
   let ba := Spec.encodeByteArray t ⟨List.replicate n el, by simpa using h⟩
   benchRoundTrip decodeKey encodeKey s!"-- bytes32[] × {n} ({ba.size} bytes)"
     t ⟨List.replicate n elba, by simpa using h⟩ ba

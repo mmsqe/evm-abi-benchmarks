@@ -47,13 +47,13 @@ transitively; run `lake update` to move to the branch tips.
   columns equally.  `./scripts/bench_diff.py --runs 50` does all of it in
   about nine seconds and prints the table and the spread, so the numbers and
   the claims about them come out of one command.
-* Run-to-run spread, `(max−min)/median` per row: Lean **13–33%** (median row
-  21%), go-ethereum **19–47%** (median row 30%), Go noisier on ten of the
+* Run-to-run spread, `(max−min)/median` per row: Lean **7–32%** (median row
+  12%), go-ethereum **14–86%** (median row 22%), Go noisier on eleven of the
   twelve rows.  That is a *range* statistic, so it grows with the run count
-  and only compares between runs of equal N.  The medians are far steadier:
-  three fifty-run passes held every Lean row within 3%, bar `nest 200` at 7%
-  (2 µs).  `decode flat 500` still straddles the band — 1.25×, 1.21×, 1.26×
-  across those passes — so that one verdict word is a coin flip.
+  and only compares between runs of equal N.  The medians are much steadier
+  than that, but the four decode rows all sit near the 1.25× band and their
+  verdict word turns on the Go column, so read them as parity-ish rather than
+  as a number.
 * The Lean rows are the `ValBA` runtime family — `encode` and `decodeStrict`
   over packed `ByteArray` payloads — not the `List UInt8` specification the
   proofs are stated over.  The specification is not timed here: that ladder is
@@ -68,18 +68,29 @@ Absolute µs are machine-specific; the ratios are the robust claim.
 
 | shape | Lean fast/ValBA | go-ethereum | Lean vs Go |
 |---|---|---|---|
-| encode flat `bytes[]` 500 | 21 | 160 | 7.6× ahead |
-| encode flat 2000 | 85 | 665 | 7.8× ahead |
-| encode `uint256[]` 1000 | 17 | 76 | 4.5× ahead |
-| encode nest depth 50 | 7 | 116 | 16.6× ahead |
-| encode nest depth 200 | 29 | 1435 | 49.5× ahead |
-| decode flat 500 (ValBA) | 57 | 74 | 1.3× ahead |
-| decode flat 2000 (ValBA) | 231 | 298 | 1.3× ahead |
-| decode `uint256[]` 2000 (ValBA) | 71 | 87 | **parity** |
-| encode unaligned 2000 | 90 | 503 | 5.6× ahead |
-| decode unaligned 2000 (ValBA) | 258 | 301 | **parity** |
-| encode `bytes32[]` 2000 | 16 | 181 | 11.3× ahead |
-| decode `bytes32[]` 2000 (ValBA) | 173 | 154 | **parity** |
+| encode flat `bytes[]` 500 | 19 | 149 | 7.8× ahead |
+| encode flat 2000 | 75 | 617 | 8.2× ahead |
+| encode `uint256[]` 1000 | 20 | 73 | 3.7× ahead |
+| encode nest depth 50 | 8 | 106 | 13.2× ahead |
+| encode nest depth 200 | 31 | 1211 | 39.1× ahead |
+| decode flat 500 (ValBA) | 57 | 67 | **parity** |
+| decode flat 2000 (ValBA) | 225 | 280 | **parity** |
+| decode `uint256[]` 2000 (ValBA) | 69 | 83 | **parity** |
+| encode unaligned 2000 | 87 | 462 | 5.3× ahead |
+| decode unaligned 2000 (ValBA) | 257 | 285 | **parity** |
+| encode `bytes32[]` 2000 | 19 | 172 | 9.1× ahead |
+| decode `bytes32[]` 2000 (ValBA) | 167 | 147 | **parity** |
+
+Three encode rows lost ground to evm-abi-lean#45, which moved the width and
+arity constraints into `Ty`: `uint256[] 1000` **17 → 20** µs/op,
+`bytes32[] 2000` **15 → 18**, `nest 200` **28 → 31**.  A/B over 40 alternating
+runs per build leaves the first two distributions disjoint (old ≤ 17 and ≤ 18,
+new ≥ 19 and ≥ 18), so this is the change and not drift.  The flat `bytes[]`
+and unaligned rows did not move, which points at the per-element reads the
+three regressed rows share — `uint`/`bytesN` now carry a `Width` whose size is
+`m.bits / 8` rather than a bare `Nat`, and a tuple is now a head plus a tail
+rather than one list — though that mechanism is inferred from which rows moved,
+not measured directly.
 
 Encoding is **a size pass and a write pass**, and no intermediate structure
 at all.  The first pass computes every dynamic subvalue's encoded size
@@ -87,7 +98,7 @@ bottom-up, one node per subvalue; the second writes the whole encoding
 forward into a buffer sized exactly once, reading each offset word off that
 size tree in `O(1)`.  go-ethereum's `pack` instead re-appends the tail at
 every level, which is `O(n·d)` in the nesting depth — the gap the `nest` rows
-measure (49× at depth 200).
+measure (39× at depth 200).
 
 Two more things earn the flat rows.  An ABI word is four `UInt64` limbs
 rather than a `Nat`, so no word round-trips through a bignum, and words are
