@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
 """A/B two evm-abi-lean revisions on the Lean bench.
 
-`bench_diff.py` answers "how does Lean compare to Go"; this answers "did this
-commit move Lean".  Comparing two separately-taken runs cannot: row medians
-drift 10-30% between runs on an idle machine, enough to invent a regression or
-to hide one.  So both binaries are built up front and then run *alternately* in
-one process, and a row counts as moved only when the two ranges do not overlap
--- not when the medians differ by some percentage.
-
-Only the Lean side is built.  For a Lean-vs-Lean comparison the go-ethereum
-column cancels, and building it would pull in cgo for nothing.
+Row medians drift 10-30% between runs, so both binaries are built up front and
+run alternately; a row counts as moved only when the ranges do not overlap.
+A build target is a git revision or a directory -- prefer the directory, since
+Lake can only fetch a revision the lakefile's URL already has.
 
 Usage:
-    ./bench_ab.py --build REV OUT        # build the Lean bench against REV
+    ./bench_ab.py --build REV_OR_DIR OUT
     ./bench_ab.py BASE_BIN HEAD_BIN [--runs N]
 """
 
@@ -29,10 +24,10 @@ ROOT = Path(__file__).resolve().parent.parent
 LEAN = ROOT / "lean"
 BENCH_RE = re.compile(r"^BENCH (\S+) (\d+) (\d+)$")
 
-# The `rev` value of the abi-lean require, leaving the rest of the block -- the
-# URL included -- alone.  `(?!\[)` stops the scan at the next section header, so
-# a later require cannot be hit by mistake.
-REV = re.compile(r'(name = "abi-lean"(?:\n(?!\[)[^\n]*)*?\n\s*rev\s*=\s*")[^"]*(")')
+# One `[[require]]` block: `(?!\[)` stops the scan at the next section header.
+REQUIRE = re.compile(r"\[\[require\]\]\n(?:(?!\[)[^\n]*\n)*")
+# Its `rev` value, leaving the rest of the block -- the URL included -- alone.
+REV = re.compile(r'(\n\s*rev\s*=\s*")[^"]*(")')
 
 
 def sh(cmd: str, cwd: Path) -> None:
@@ -42,20 +37,33 @@ def sh(cmd: str, cwd: Path) -> None:
         sys.exit(f"{cmd} failed ({p.returncode})")
 
 
-def build(rev: str, out: Path) -> None:
-    """Build lean/bench against one abi-lean revision.
+def pin(text: str, target: str) -> str:
+    """Point the abi-lean require at a directory, or at a git revision."""
+    blocks = [m for m in REQUIRE.finditer(text) if 'name = "abi-lean"' in m[0]]
+    if len(blocks) != 1:
+        sys.exit(f"expected one abi-lean require in the lakefile, found {len(blocks)}")
+    m = blocks[0]
+    if Path(target).is_dir():
+        block = f'[[require]]\nname = "abi-lean"\npath = "{Path(target).resolve()}"'
+    else:
+        block, n = REV.subn(lambda r: r[1] + target + r[2], m[0])
+        if n != 1:
+            sys.exit(f"the abi-lean require has no `rev` to pin to {target}")
+    tail = m[0][len(m[0].rstrip()):]  # blank lines after the block, kept as-is
+    return text[:m.start()] + block.rstrip() + tail + text[m.end():]
 
-    The lakefile and manifest are restored on the way out; `.lake/packages` is
-    left checked out at `rev`, which the next `lake update` corrects.
+
+def build(target: str, out: Path) -> None:
+    """Build lean/bench against one abi-lean revision or checkout.
+
+    The lakefile and manifest are restored on the way out, so the pin never
+    reaches a commit.  A directory is built in place, filling its own `.lake`.
     """
     lakefile = LEAN / "lakefile.toml"
     saved = {p: p.read_text() if p.exists() else None
              for p in (lakefile, LEAN / "lake-manifest.json")}
     try:
-        text, n = REV.subn(lambda m: m[1] + rev + m[2], lakefile.read_text())
-        if n != 1:
-            sys.exit(f"no `rev` in the abi-lean require of {lakefile}")
-        lakefile.write_text(text)
+        lakefile.write_text(pin(lakefile.read_text(), target))
         sh("lake update", LEAN)
         sh("lake build bench", LEAN)
         shutil.copy(LEAN / ".lake/build/bin/bench", out)
@@ -117,8 +125,9 @@ def report(rows: dict, runs: int) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--build", nargs=2, metavar=("REV", "OUT"),
-                    help="build lean/bench against REV, write the binary to OUT")
+    ap.add_argument("--build", nargs=2, metavar=("REV_OR_DIR", "OUT"),
+                    help="build lean/bench against a revision or a checkout "
+                         "directory, and write the binary to OUT")
     ap.add_argument("--runs", type=int, default=40,
                     help="alternating runs per build (default: %(default)s)")
     ap.add_argument("bins", nargs="*", metavar="BIN", help="BASE_BIN HEAD_BIN")
